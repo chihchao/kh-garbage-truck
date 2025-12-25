@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高雄市垃圾車即時定位</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        .custom-truck-icon {
+            background: none;
+            border: none;
+        }
+
+        .refresh-loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 2s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* 訊息提示框樣式 */
+        #toast-container {
+            position: fixed;
+            top: 90px;
+            right: 20px;
+            z-index: 9999;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 font-sans h-screen flex flex-col overflow-hidden">
+
+    <header class="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center flex-none">
+        <div>
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                🚚 高雄市垃圾車動態
+            </h1>
+            <p class="text-xs opacity-80">資料來源：高雄市政府公開資料 (每 60 秒更新)</p>
+        </div>
+        <div id="status-area" class="text-sm bg-blue-700 px-3 py-1 rounded-full">
+            <span id="loader" class="refresh-loader mr-2 hidden"></span>
+            <span id="update-time">初始化中...</span>
+        </div>
+    </header>
+
+    <div id="toast-container"></div>
+
+    <main class="relative flex-grow">
+        <div id="map"></div>
+
+        <!-- 工具列 -->
+        <div class="absolute bottom-6 left-6 z-[1000] flex flex-col gap-2">
+            <button onclick="locateUser()"
+                class="bg-white p-3 rounded-full shadow-lg hover:bg-gray-50 transition-colors" title="回到我的位置">
+                📍
+            </button>
+        </div>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // 設定 API 網址
+        const API_URL = "https://api.kcg.gov.tw/Api/Service/Get/aaf4ce4b-4ca8-43de-bfaf-6dc97e89cac0";
+
+        let map;
+        let truckMarkers = [];
+        let userMarker;
+        const defaultZoom = 15;
+        const defaultCenter = [22.6273, 120.3014]; // 高雄市中心
+
+        // 顯示提示訊息 (取代 alert)
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const bgColor = type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+            toast.className = `${bgColor} text-white px-4 py-2 rounded shadow-lg mb-2 text-sm transition-opacity duration-500`;
+            toast.innerText = message;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 500);
+            }, 5000);
+        }
+
+        // 初始化地圖
+        function initMap() {
+            map = L.map('map').setView(defaultCenter, defaultZoom);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // 執行第一次資料獲取
+            fetchData();
+            // 嘗試定位
+            locateUser();
+
+            // 每 60 秒執行一次更新
+            setInterval(fetchData, 60000);
+        }
+
+        // 取得使用者位置
+        function locateUser() {
+            if ("geolocation" in navigator) {
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                };
+
+                navigator.geolocation.getCurrentPosition(function (position) {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    if (userMarker) {
+                        userMarker.setLatLng([lat, lng]);
+                    } else {
+                        const userIcon = L.divIcon({
+                            html: '<div style="background-color: #3b82f6; width: 15px; height: 15px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);"></div>',
+                            className: 'user-location-icon',
+                            iconSize: [15, 15]
+                        });
+                        userMarker = L.marker([lat, lng], { icon: userIcon }).addTo(map).bindPopup("您的目前位置");
+                    }
+                    map.setView([lat, lng], defaultZoom);
+                    showToast("已成功定位到您的位置");
+                }, function (error) {
+                    let msg = "";
+                    switch (error.code) {
+                        case error.PERMISSION_DENIED:
+                            msg = "定位失敗：使用者拒絕提供位置。";
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            msg = "定位失敗：位置資訊不可用。";
+                            break;
+                        case error.TIMEOUT:
+                            msg = "定位失敗：請求逾時。";
+                            break;
+                        default:
+                            msg = "定位失敗：發生未知錯誤。";
+                            break;
+                    }
+                    console.error(msg, error);
+                    showToast(msg, 'error');
+                }, options);
+            } else {
+                showToast("您的瀏覽器不支援地理定位", 'error');
+            }
+        }
+
+        // 獲取 API 資料
+        async function fetchData() {
+            const loader = document.getElementById('loader');
+            const updateTimeSpan = document.getElementById('update-time');
+
+            loader.classList.remove('hidden');
+
+            try {
+                // 使用快取清除參數避免 API 快取舊資料
+                const response = await fetch(`${API_URL}?_=${new Date().getTime()}`);
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    updateMarkers(result.data);
+                    const now = new Date();
+                    updateTimeSpan.innerText = `最後更新：${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                } else {
+                    updateTimeSpan.innerText = "資料格式錯誤";
+                }
+            } catch (error) {
+                console.error("獲取資料失敗: ", error);
+                updateTimeSpan.innerText = "更新失敗，請檢查網路";
+            } finally {
+                loader.classList.add('hidden');
+            }
+        }
+
+        // 更新地圖標記
+        function updateMarkers(data) {
+            // 清除現有垃圾車標記
+            truckMarkers.forEach(m => map.removeLayer(m));
+            truckMarkers = [];
+
+            data.forEach(truck => {
+                const lat = parseFloat(truck.y || truck.Latitude);
+                const lng = parseFloat(truck.x || truck.Longitude);
+                const carNumber = truck.car || truck.CarNumber || "未知車號";
+                const time = truck.time || truck.UpdateDate || "未知時間";
+
+                if (!isNaN(lat) && !isNaN(lng)) {
+                    const truckIcon = L.divIcon({
+                        html: `<div class="text-2xl" style="filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5));">🚚</div>`,
+                        className: 'custom-truck-icon',
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15]
+                    });
+
+                    const marker = L.marker([lat, lng], { icon: truckIcon })
+                        .addTo(map)
+                        .bindPopup(`
+                            <div class="p-1">
+                                <b class="text-lg">車號：${carNumber}</b><br>
+                                <hr class="my-1">
+                                <span class="text-gray-600 text-sm">更新時間：${time}</span>
+                            </div>
+                        `);
+
+                    truckMarkers.push(marker);
+                }
+            });
+        }
+
+        // 初始化
+        window.onload = initMap;
+
+    </script>
+</body>
+
+</html>
