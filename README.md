@@ -1,5 +1,7 @@
 # 🚚 高雄市垃圾車即時定位 (Kaohsiung Garbage Truck Tracker)
 
+[🚚 高雄市垃圾車即時定位](https://chihchao.github.io/kh-garbage-truck/)
+
 這是一個基於 web 的輕量級應用程式，用於即時顯示高雄市垃圾車的位置。
 資料來源使用 [高雄市政府資料開放平台](https://data.kcg.gov.tw/) 的即時 API。
 
@@ -35,5 +37,4 @@ A: 請確認：
 2. 您的裝置是否有開啟 GPS/定位功能？
 3. 如果是在本地端開發，請使用 `localhost` 或 `https` 協定開啟。
 
----
-資料來源：高雄市政府環境保護局
+
